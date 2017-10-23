@@ -1,0 +1,357 @@
+#!/usr/bin/env python
+# This script should move Baxter's left limb to the chosen coordinates.
+# PLEASE ADD YOUR CODE WHERE INDICATED
+# Avoid modifying the rest of the code if not necessary
+# 
+# Authors: Sarunpal Gabri
+# Last update: 2nd December 2016 by Sarunpal Gahbri
+
+import rospy
+import baxter_interface
+import numpy as np
+import argparse
+import struct
+import sys
+import math
+import time
+#import winsound
+from geometry_msgs.msg import (
+    PoseStamped,
+    Pose,
+    Point,
+    Quaternion,
+)
+from std_msgs.msg import Header
+from baxter_core_msgs.srv import (
+    SolvePositionIK,
+    SolvePositionIKRequest,
+)
+
+#############################################
+#Initialize variable
+limb = "left"
+rospy.init_node("kinematics")
+left_arm = baxter_interface.Limb(limb)
+
+
+# Inverse kinematics
+def inverse_kinematics(p, q):
+    # Initialising ROS node
+    ns = "ExternalTools/" + limb + "/PositionKinematicsNode/IKService"
+    iksvc = rospy.ServiceProxy(ns, SolvePositionIK)
+    ikreq = SolvePositionIKRequest()
+    hdr = Header(stamp=rospy.Time.now(), frame_id='base')
+    inputting = True
+    hdr = Header(stamp=rospy.Time.now(), frame_id='base')
+    poses = {
+            'left': PoseStamped(
+                    header=hdr,
+                    pose=Pose(
+                            position=Point(
+                                    x = p[0],
+                                    y = p[1],
+                                    z = p[2],
+                            ),
+                            orientation=Quaternion(
+                                    x = q[0],
+                                    y = q[1],
+                                    z = q[2],
+                                    w = q[3],
+                            )
+                    ),
+            ),
+    }
+
+    # Print the pose
+#    print '\nThe pose', poses
+    ikreq.pose_stamp.append(poses['left'])
+  
+    # Call the IK service
+    try:
+            rospy.wait_for_service(ns, 5.0)
+            resp = iksvc(ikreq)
+    except (rospy.ServiceException, rospy.ROSException), e:
+            rospy.logerr("Service call failed: %s" %(e,))
+            #return 1
+    # Test if the response is valid
+    if (resp.isValid[0]):
+            #print("Success - Valid Joint Solution Found:")
+            #print("Moving Joints to Solution")
+            limb_joints = dict(zip(resp.joints[0].name, resp.joints[0].position))
+            #print("Joint angles:")
+            #print(limb_joints)
+            print 'moving to ', limb_joints
+            left_arm.move_to_joint_positions(limb_joints)
+ #           left_arm.set_joint_positions(limb_joints)
+
+    else:
+            print("INVALID POSE - No Valid Joint Solution Found.")
+
+##Function has been tested and proven to be correct
+def getMag(vec):
+    mag = 0
+    mag = math.sqrt(vec[0]**2 + vec[1]**2 + vec[2]**2)
+	#= sqrt(np.sum(vec[i]**2 for i in range(len(vec)))
+    return mag
+
+##Function has been tested and proven to be correct
+def getRotMatrix(p0,pX,pY):
+    ## first determine two vectors from the 3 points
+    origToX = [pX[0] - p0[0], pX[1] - p0[1], pX[2]-p0[2]]
+    origToY = [pY[0] - p0[0], pY[1] - p0[1], pY[2]-p0[2]]
+    ## determine normal vector (cross product of the two vectors)
+    zVec = np.cross(origToX, origToY) 
+    unitZ = zVec / getMag(zVec) ##normalize to unit vector
+    ##get the unit vector of origToX and origToY
+    m = getMag(origToX)
+    unitX = ([origToX[0] / m, origToX[1] / m, origToX[2] / m])
+    m = getMag(origToY)
+    unitY = ([origToY[0] / m, origToY[1] / m, origToY[2] / m])
+    unitY = np.cross(unitZ, unitX)
+
+#    unitZ = -1*unitZ
+    unitZ = unitZ.tolist()
+    ## get rotation matrix (cross product of the normal vector with one of the 
+    rotMat = np.array([unitX, unitY, unitZ])
+    rotMat = rotMat.T
+    return rotMat
+
+##Function has been tested and proven to be correct
+def getPoints(): #get pO,pX,pY for plane identification
+    print 'move baxter to define origin then press enter to record'
+    raw_input()
+    pose = left_arm.endpoint_pose()
+    p0 = [pose['position'].x, pose['position'].y, pose['position'].z]
+    
+    print 'move baxter to point x then press enter to record'
+    raw_input()
+    pose = left_arm.endpoint_pose()
+    pX = [pose['position'].x, pose['position'].y, pose['position'].z]
+
+    
+    print 'move baxter to point y then press enter to record'
+    raw_input()
+    pose = left_arm.endpoint_pose()
+    pY = [pose['position'].x, pose['position'].y, pose['position'].z]
+
+    return p0,pX,pY
+
+##Function has been tested and proven to be correct
+def getQuat(r): 
+
+#    qw = math.sqrt(1+r[0,0]+r[1,1]+r[2,2])/2
+ #   qx = (r[1,2] - r[2,1])/(4*qw)
+ #   qy = (r[2,0] - r[0,2])/(4*qw)
+ #   qz = (r[0,1] - r[1,0])/(4*qw)
+
+    m00 = r[0,0]
+    m01 = r[0,1]
+    m02 = r[0,2]
+    m10 = r[1,0]
+    m11 = r[1,1]
+    m12 = r[1,2]
+    m20 = r[2,0]
+    m21 = r[2,1]
+    m22 = r[2,2]##
+
+    tr = m00 + m11 + m22#
+
+    if (tr > 0):
+        S = math.sqrt(tr+1.0) * 2 # S=4*qw 
+        qw = 0.25 * S
+        qx = (m21 - m12) / S
+        qy = (m02 - m20) / S
+        qz = (m10 - m01) / S#
+	print 'Case 1'# 
+    elif((m00 > m11)&(m00 > m22)):
+        S = math.sqrt(1.0 + m00 - m11 - m22) * 2 # S=4*qx 
+        qw = (m21 - m12) / S
+        qx = 0.25 * S
+        qy = (m01 + m10) / S
+        qz = (m02 + m20) / S#
+	print 'Case 2'# 
+    elif(m11 > m22): 
+        S = math.sqrt(1.0 + m11 - m00 - m22) * 2 # S=4*qy
+        qw = (m02 - m20) / S
+        qx = (m01 + m10) / S 
+        qy = 0.25 * S
+        qz = (m12 + m21) / S#
+	print 'Case 3'
+    else: 
+        S = math.sqrt(1.0 + m22 - m00 - m11) * 2 # S=4*qz
+        qw = (m10 - m01) / S
+        qx = (m02 + m20) / S
+        qy = (m12 + m21) / S
+        qz = 0.25 * S#
+	print 'Case 4'
+   
+    q = [qx,qy,qz,qw]
+#    print '\n\nquat: ', q
+    return q
+
+def quat2rot(q) :
+    sqw = q[3]*q[3]
+    sqx = q[0]*q[0]
+    sqy = q[1]*q[1]
+    sqz = q[2]*q[2]
+
+    # invs (inverse square length) is only required if quaternion is not already normalised
+    invs = 1 / (sqx + sqy + sqz + sqw)
+    m00 = ( sqx - sqy - sqz + sqw)*invs # since sqw + sqx + sqy + sqz =1/invs*invs
+    m11 = (-sqx + sqy - sqz + sqw)*invs 
+    m22 = (-sqx - sqy + sqz + sqw)*invs 
+    
+    tmp1 = q[0]*q[1]
+    tmp2 = q[2]*q[3]
+    m10 = 2. * (tmp1 + tmp2)*invs 
+    m01 = 2. * (tmp1 - tmp2)*invs 
+    
+    tmp1 = q[0]*q[2]
+    tmp2 = q[1]*q[3]
+    m20 = 2.0 * (tmp1 - tmp2)*invs 
+    m02 = 2.0 * (tmp1 + tmp2)*invs 
+    tmp1 = q[1]*q[2]
+    tmp2 = q[0]*q[3]
+    m21 = 2. * (tmp1 + tmp2)*invs 
+    m12 = 2. * (tmp1 - tmp2)*invs   
+
+    rot = [[m00, m01, m02],[m10, m11, m12],[m20, m21, m22]]
+    
+    return rot
+
+##Function has been tested and proven to be correct
+def pFrame(origin, max_x, max_y, rotM):
+    origin = np.array(origin)
+    max_x = np.array(max_x)
+    max_y = np.array(max_y)
+    max_xP = np.dot(rotMat_inv, max_x.T)
+    max_yP = np.dot(rotMat_inv, max_y.T)
+    ori_oP = np.dot(rotMat_inv, origin.T)
+    return ori_oP, max_xP, max_yP 
+	
+def printCurPose():
+    pose = left_arm.endpoint_pose()
+    print 'x: ','%0.4f' % pose['position'].x, '\ty:','%0.4f' % pose['position'].y, '\tz:','%0.4f' %  pose['position'].z,'\txrot:','%0.4f' % pose['orientation'].x,'\tyrot:','%0.4f' % pose['orientation'].y,'\tzrot:','%0.4f' % pose['orientation'].z, '\twrot:','%0.4f' % pose['orientation'].w  
+    
+def drawLine(numInc, dir):
+    #get starting point
+    pose = left_arm.endpoint_pose()    
+    startPoint_w = np.array((pose['position'].x, pose['position'].y, pose['position'].z))
+    startPoint_p = np.dot(rotMat_inv, startPoint_w) #get the start point in paper frame
+    if(dir == 'd'): #if moving down
+		inc = np.array([0, 0.02, 0])
+    elif(dir == 'u'):
+		inc = np.array([0, -0.02, 0])
+    elif(dir == 'r'):
+		inc = np.array([0.02, 0, 0])
+    elif(dir == 'l'):
+		inc = np.array([-0.02, 0, 0])
+    elif(dir == 'ur'):
+        inc = np.array([0.02, -0.02, 0])
+	elif(dir == 'ul'):
+        inc = np.array([-0.02, -0.02, 0])
+	elif(dir == 'dr'):
+        inc = np.array([0.02, 0.02, 0])
+	elif(dir == 'dl'):
+        inc = np.array([-0.02, 0.02, 0])		#go up and right diagonally
+    for i in range(numInc):
+       temp_next = startPoint_p + (i*inc) 
+       print '\nstep: ', i
+#       raw_input()
+       next = np.dot(rotMat, temp_next)
+       print 'Next coordinate in paper frame:', temp_next
+       print 'Next coordinate in world frame:', next 
+       inverse_kinematics(next, quatMat)
+
+
+################################################
+## MAIN FUNCTION ##
+##Define the number of points in paper frame
+#resolution = 6
+
+## move baxter arm to origin, then max x, then max y
+ori, max_x, max_y = getPoints() ##Offset
+rotMat = getRotMatrix(ori, max_x, max_y)
+rotMat_inv = np.linalg.inv(rotMat)
+quatMat = getQuat(rotMat) #quaternion matrix
+
+##Obtain the paper coordinate frame
+o_paper, x_paper, y_paper = pFrame(ori, max_x, max_y, rotMat)
+
+##Obtain the number of increment/point 
+o_paper = np.array(o_paper)
+x_paper = np.array(x_paper)
+y_paper = np.array(y_paper)
+
+##Convert from paper coordinate to world coordinate
+o_w = np.dot(rotMat, o_paper.T)
+xMax_w = np.dot(rotMat, x_paper.T)
+yMax_w = np.dot(rotMat, y_paper.T)
+
+#Get mid point of y
+print 'Please remove yourself from baxter'
+raw_input()
+mid_yP = (y_paper + o_paper)/2
+mid_y = np.dot(rotMat, mid_yP)
+
+#inverse_kinematics(mid_y, quatMat)
+
+#squareRes = 8
+#square_botY = y_paper/4
+#square_topY = y_paper/4 * 3
+#square_leftX = x_paper/4
+#square_rightX = x_paper
+
+print 'xMax: ', xMax_w, 'xPaper:', x_paper
+
+print 'press enter to move baxter hand to start point'
+raw_input()
+inverse_kinematics(o_w, quatMat)
+print 'press enter to move baxter hand to point 1'
+raw_input()
+inverse_kinematics(xMax_w, quatMat)
+
+#print 'press enter to move baxter hand to point 1.5'
+#raw_input()
+#inverse_kinematics(
+
+print 'press enter to move baxter hand to point 2'
+raw_input()
+inverse_kinematics(yMax_w, quatMat)
+
+
+##draw line
+#print 'press enter to draw top of square'
+#raw_input()
+
+#get to centerish:
+drawLine(12,'u')
+drawLine(12,'r')
+
+#square
+drawLine(12,'r') 
+drawLine(12,'d')
+drawLine(12,'l')
+drawLine(12,'u')
+
+
+#print 'Please remove yourself from baxter workplace'
+#raw_input()
+#inverse_kinematics(o_w, quatMat)
+#pose = left_arm.endpoint_pose()
+#print 'Current pose', pose
+#raw_input()
+
+#inverse_kinematics(xMax_w, quatMat)
+#pose = left_arm.endpoint_pose()
+#print 'Current pose', pose
+#raw_input()
+
+#inverse_kinematics(yMax_w, quatMat)
+#pose = left_arm.endpoint_pose()
+#print 'Current pose', pose
+#raw_input()
+
+
+
+
