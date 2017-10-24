@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 # This script should return the x y z and orientation coordinates of the end effector of the left limb.
-# PLEASE ADD YOUR CODE WHERE INDICATED
-# Avoid modifying the rest of the code if not necessary
+# 
 #
-# Authors: Stefano Pietrosanti - s.pietrosanti@pgr.reading.ac.uk
-#          Guy Butcher
+#         
+#Edited by sarunpal on 13/04/2016
 
 import rospy
 import baxter_interface
